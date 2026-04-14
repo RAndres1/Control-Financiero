@@ -21,3 +21,28 @@ export function getPreviousMonthRange(baseDate = new Date()) {
   const end = new Date(baseDate.getFullYear(), baseDate.getMonth(), 0);
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 }
+
+export function getValidWorkspaceScope(value?: string): "personal" | "business" | "all" {
+  if (value === "personal" || value === "business" || value === "all") {
+    return value;
+  }
+
+  return "personal";
+}
+
+export function withScope(path: string, scope?: string, extraParams?: Record<string, string | undefined>) {
+  const params = new URLSearchParams();
+
+  if (scope) {
+    params.set("scope", scope);
+  }
+
+  Object.entries(extraParams ?? {}).forEach(([key, value]) => {
+    if (value) {
+      params.set(key, value);
+    }
+  });
+
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}

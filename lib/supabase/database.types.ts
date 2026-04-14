@@ -10,7 +10,7 @@ export interface Database {
           initial_balance: number;
           is_active: boolean;
           name: string;
-          owner_type: "personal" | "business";
+          workspace_id: string;
         };
         Insert: {
           account_type: "cash" | "bank" | "wallet" | "credit_card" | "savings";
@@ -20,7 +20,7 @@ export interface Database {
           initial_balance?: number;
           is_active?: boolean;
           name: string;
-          owner_type: "personal" | "business";
+          workspace_id: string;
         };
         Update: {
           account_type?: "cash" | "bank" | "wallet" | "credit_card" | "savings";
@@ -30,7 +30,7 @@ export interface Database {
           initial_balance?: number;
           is_active?: boolean;
           name?: string;
-          owner_type?: "personal" | "business";
+          workspace_id?: string;
         };
         Relationships: [];
       };
@@ -40,21 +40,21 @@ export interface Database {
           id: string;
           kind: "income" | "expense";
           name: string;
-          owner_type: "personal" | "business";
+          workspace_id: string;
         };
         Insert: {
           created_at?: string;
           id?: string;
           kind: "income" | "expense";
           name: string;
-          owner_type: "personal" | "business";
+          workspace_id: string;
         };
         Update: {
           created_at?: string;
           id?: string;
           kind?: "income" | "expense";
           name?: string;
-          owner_type?: "personal" | "business";
+          workspace_id?: string;
         };
         Relationships: [];
       };
@@ -69,7 +69,7 @@ export interface Database {
           kind: "income" | "expense";
           movement_date: string;
           notes: string | null;
-          owner_type: "personal" | "business";
+          workspace_id: string;
         };
         Insert: {
           account_id: string;
@@ -81,7 +81,7 @@ export interface Database {
           kind: "income" | "expense";
           movement_date: string;
           notes?: string | null;
-          owner_type: "personal" | "business";
+          workspace_id: string;
         };
         Update: {
           account_id?: string;
@@ -93,13 +93,102 @@ export interface Database {
           kind?: "income" | "expense";
           movement_date?: string;
           notes?: string | null;
-          owner_type?: "personal" | "business";
+          workspace_id?: string;
+        };
+        Relationships: [];
+      };
+      profiles: {
+        Row: {
+          created_at: string;
+          email: string | null;
+          full_name: string | null;
+          id: string;
+          onboarding_completed: boolean;
+          onboarding_mode: "personal_only" | "personal_and_business" | null;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          email?: string | null;
+          full_name?: string | null;
+          id: string;
+          onboarding_completed?: boolean;
+          onboarding_mode?: "personal_only" | "personal_and_business" | null;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          email?: string | null;
+          full_name?: string | null;
+          id?: string;
+          onboarding_completed?: boolean;
+          onboarding_mode?: "personal_only" | "personal_and_business" | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      workspace_members: {
+        Row: {
+          created_at: string;
+          role: "owner" | "member";
+          user_id: string;
+          workspace_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          role?: "owner" | "member";
+          user_id: string;
+          workspace_id: string;
+        };
+        Update: {
+          created_at?: string;
+          role?: "owner" | "member";
+          user_id?: string;
+          workspace_id?: string;
+        };
+        Relationships: [];
+      };
+      workspaces: {
+        Row: {
+          created_at: string;
+          id: string;
+          kind: "personal" | "business";
+          name: string;
+          owner_user_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          kind: "personal" | "business";
+          name: string;
+          owner_user_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          kind?: "personal" | "business";
+          name?: string;
+          owner_user_id?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      complete_onboarding: {
+        Args: {
+          selected_mode: "personal_only" | "personal_and_business";
+          business_workspace_name?: string;
+        };
+        Returns: {
+          personal_workspace_id: string;
+          business_workspace_id: string | null;
+        }[];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

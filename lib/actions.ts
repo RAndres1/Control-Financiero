@@ -2,9 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { AccountType, MovementKind, OwnerType } from "@/lib/types";
+import type { AccountType, MovementKind } from "@/lib/types";
+import { withScope } from "@/lib/utils";
 
 function getRequiredString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -12,6 +14,16 @@ function getRequiredString(formData: FormData, key: string) {
     throw new Error(`Missing field: ${key}`);
   }
   return value.trim();
+}
+
+function getOptionalString(formData: FormData, key: string) {
+  const value = formData.get(key);
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function getNumberValue(formData: FormData, key: string) {
@@ -22,16 +34,12 @@ function getNumberValue(formData: FormData, key: string) {
   return value;
 }
 
-function redirectWithMessage(path: string, type: "error" | "success", message: string) {
-  redirect(`${path}?${type}=${encodeURIComponent(message)}`);
+function getScopeValue(formData: FormData) {
+  return getOptionalString(formData, "scope") ?? "personal";
 }
 
-function getValidOwnerType(value: string): OwnerType {
-  if (value !== "personal" && value !== "business") {
-    throw new Error("El tipo debe ser personal o negocio.");
-  }
-
-  return value;
+function redirectWithMessage(path: string, scope: string, type: "error" | "success", message: string, extraParams?: Record<string, string | undefined>) {
+  redirect(withScope(path, scope, { ...extraParams, [type]: message }));
 }
 
 function getValidAccountType(value: string): AccountType {
@@ -51,18 +59,20 @@ function getValidMovementKind(value: string): MovementKind {
 }
 
 export async function saveAccountAction(formData: FormData) {
+  const scope = getScopeValue(formData);
+
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const id = formData.get("id");
     const initialBalance = getNumberValue(formData, "initial_balance");
 
     if (initialBalance < 0) {
-      redirectWithMessage("/accounts", "error", "El saldo inicial no puede ser menor que 0.");
+      redirectWithMessage("/accounts", scope, "error", "El saldo inicial no puede ser menor que 0.");
     }
 
     const payload = {
+      workspace_id: getRequiredString(formData, "workspace_id"),
       name: getRequiredString(formData, "name"),
-      owner_type: getValidOwnerType(getRequiredString(formData, "owner_type")),
       account_type: getValidAccountType(getRequiredString(formData, "account_type")),
       currency: getRequiredString(formData, "currency").toUpperCase(),
       initial_balance: initialBalance,
@@ -75,77 +85,91 @@ export async function saveAccountAction(formData: FormData) {
     const { error } = await query;
 
     if (error) {
-      redirectWithMessage("/accounts", "error", error.code === "23505" ? "Ya existe una cuenta con ese nombre." : error.message);
+      redirectWithMessage("/accounts", scope, "error", error.code === "23505" ? "Ya existe una cuenta con ese nombre en ese workspace." : error.message);
     }
 
     revalidatePath("/");
+    revalidatePath("/reports");
     revalidatePath("/accounts");
     revalidatePath("/movements");
-    redirectWithMessage("/accounts", "success", typeof id === "string" && id ? "Cuenta actualizada." : "Cuenta creada.");
+    redirectWithMessage("/accounts", scope, "success", typeof id === "string" && id ? "Cuenta actualizada." : "Cuenta creada.");
   } catch (error) {
-    if (error instanceof Error) {
-      redirectWithMessage("/accounts", "error", error.message);
+    if (isRedirectError(error)) {
+      throw error;
     }
 
-    redirectWithMessage("/accounts", "error", "No fue posible guardar la cuenta.");
+    if (error instanceof Error) {
+      redirectWithMessage("/accounts", scope, "error", error.message);
+    }
+
+    redirectWithMessage("/accounts", scope, "error", "No fue posible guardar la cuenta.");
   }
 }
 
 export async function deleteAccountAction(formData: FormData) {
+  const scope = getScopeValue(formData);
+
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const { error } = await supabase.from("accounts").delete().eq("id", getRequiredString(formData, "id"));
 
     if (error) {
       redirectWithMessage(
         "/accounts",
+        scope,
         "error",
         error.code === "23503" ? "No puedes eliminar una cuenta con movimientos asociados." : error.message
       );
     }
 
     revalidatePath("/");
+    revalidatePath("/reports");
     revalidatePath("/accounts");
     revalidatePath("/movements");
-    redirectWithMessage("/accounts", "success", "Cuenta eliminada.");
+    redirectWithMessage("/accounts", scope, "success", "Cuenta eliminada.");
   } catch (error) {
-    if (error instanceof Error) {
-      redirectWithMessage("/accounts", "error", error.message);
+    if (isRedirectError(error)) {
+      throw error;
     }
 
-    redirectWithMessage("/accounts", "error", "No fue posible eliminar la cuenta.");
+    if (error instanceof Error) {
+      redirectWithMessage("/accounts", scope, "error", error.message);
+    }
+
+    redirectWithMessage("/accounts", scope, "error", "No fue posible eliminar la cuenta.");
   }
 }
 
 export async function saveCategoryAction(formData: FormData) {
+  const scope = getScopeValue(formData);
+
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const id = formData.get("id");
     const name = getRequiredString(formData, "name");
-    const ownerType = getValidOwnerType(getRequiredString(formData, "owner_type"));
+    const workspaceId = getRequiredString(formData, "workspace_id");
     const kind = getValidMovementKind(getRequiredString(formData, "kind"));
 
-    const duplicateQuery = supabase
+    const { data: duplicateData, error: duplicateError } = await supabase
       .from("categories")
       .select("id")
-      .eq("owner_type", ownerType)
+      .eq("workspace_id", workspaceId)
       .eq("kind", kind)
       .ilike("name", name)
       .limit(1);
 
-    const { data: duplicateData, error: duplicateError } = await duplicateQuery;
     if (duplicateError) {
-      redirectWithMessage("/categories", "error", duplicateError.message);
+      redirectWithMessage("/categories", scope, "error", duplicateError.message);
     }
 
     const duplicated = (duplicateData ?? []).some((item) => item.id !== id);
     if (duplicated) {
-      redirectWithMessage("/categories", "error", "Ya existe una categoria con ese nombre para ese ambito y tipo.");
+      redirectWithMessage("/categories", scope, "error", "Ya existe una categoria con ese nombre y tipo en ese workspace.");
     }
 
     const payload = {
+      workspace_id: workspaceId,
       name,
-      owner_type: ownerType,
       kind
     };
 
@@ -155,97 +179,109 @@ export async function saveCategoryAction(formData: FormData) {
     const { error } = await query;
 
     if (error) {
-      redirectWithMessage("/categories", "error", error.message);
+      redirectWithMessage("/categories", scope, "error", error.message);
     }
 
     revalidatePath("/");
+    revalidatePath("/reports");
     revalidatePath("/categories");
     revalidatePath("/movements");
-    redirectWithMessage("/categories", "success", typeof id === "string" && id ? "Categoria actualizada." : "Categoria creada.");
+    redirectWithMessage("/categories", scope, "success", typeof id === "string" && id ? "Categoria actualizada." : "Categoria creada.");
   } catch (error) {
-    if (error instanceof Error) {
-      redirectWithMessage("/categories", "error", error.message);
+    if (isRedirectError(error)) {
+      throw error;
     }
 
-    redirectWithMessage("/categories", "error", "No fue posible guardar la categoria.");
+    if (error instanceof Error) {
+      redirectWithMessage("/categories", scope, "error", error.message);
+    }
+
+    redirectWithMessage("/categories", scope, "error", "No fue posible guardar la categoria.");
   }
 }
 
 export async function deleteCategoryAction(formData: FormData) {
+  const scope = getScopeValue(formData);
+
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const { error } = await supabase.from("categories").delete().eq("id", getRequiredString(formData, "id"));
 
     if (error) {
       redirectWithMessage(
         "/categories",
+        scope,
         "error",
         error.code === "23503" ? "No puedes eliminar una categoria con movimientos asociados." : error.message
       );
     }
 
     revalidatePath("/");
+    revalidatePath("/reports");
     revalidatePath("/categories");
     revalidatePath("/movements");
-    redirectWithMessage("/categories", "success", "Categoria eliminada.");
+    redirectWithMessage("/categories", scope, "success", "Categoria eliminada.");
   } catch (error) {
-    if (error instanceof Error) {
-      redirectWithMessage("/categories", "error", error.message);
+    if (isRedirectError(error)) {
+      throw error;
     }
 
-    redirectWithMessage("/categories", "error", "No fue posible eliminar la categoria.");
+    if (error instanceof Error) {
+      redirectWithMessage("/categories", scope, "error", error.message);
+    }
+
+    redirectWithMessage("/categories", scope, "error", "No fue posible eliminar la categoria.");
   }
 }
 
 export async function saveMovementAction(formData: FormData) {
+  const scope = getScopeValue(formData);
+
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const id = formData.get("id");
     const amount = getNumberValue(formData, "amount");
     const descriptionValue = (formData.get("description") as string | null)?.trim() || "";
     const notesValue = (formData.get("notes") as string | null)?.trim() || null;
 
     if (amount <= 0) {
-      redirectWithMessage("/movements", "error", "El monto debe ser mayor que 0.");
+      redirectWithMessage("/movements", scope, "error", "El monto debe ser mayor que 0.");
     }
 
     const payload = {
+      workspace_id: getRequiredString(formData, "workspace_id"),
       movement_date: getRequiredString(formData, "movement_date"),
       description: descriptionValue || notesValue || "Movimiento sin descripcion",
       amount,
       kind: getValidMovementKind(getRequiredString(formData, "kind")),
-      owner_type: getValidOwnerType(getRequiredString(formData, "owner_type")),
       account_id: getRequiredString(formData, "account_id"),
       category_id: getRequiredString(formData, "category_id"),
       notes: notesValue
     };
 
     const [{ data: accountData, error: accountError }, { data: categoryData, error: categoryError }] = await Promise.all([
-      supabase.from("accounts").select("id, owner_type").eq("id", payload.account_id).maybeSingle(),
-      supabase.from("categories").select("id, owner_type, kind").eq("id", payload.category_id).maybeSingle()
+      supabase.from("accounts").select("id, workspace_id").eq("id", payload.account_id).maybeSingle(),
+      supabase.from("categories").select("id, workspace_id, kind").eq("id", payload.category_id).maybeSingle()
     ]);
 
     if (accountError || categoryError) {
-      redirectWithMessage("/movements", "error", accountError?.message || categoryError?.message || "No fue posible validar el movimiento.");
+      redirectWithMessage("/movements", scope, "error", accountError?.message || categoryError?.message || "No fue posible validar el movimiento.");
     }
 
     if (!accountData) {
-      redirectWithMessage("/movements", "error", "La cuenta seleccionada no existe.");
+      redirectWithMessage("/movements", scope, "error", "La cuenta seleccionada no existe.");
     }
 
     if (!categoryData) {
-      redirectWithMessage("/movements", "error", "La categoria seleccionada no existe.");
+      redirectWithMessage("/movements", scope, "error", "La categoria seleccionada no existe.");
     }
 
-    const account = accountData!;
-    const category = categoryData!;
-
-    if (account.owner_type !== payload.owner_type) {
-      redirectWithMessage("/movements", "error", "La cuenta no coincide con el ambito del movimiento.");
+    if (accountData!.workspace_id !== payload.workspace_id) {
+      redirectWithMessage("/movements", scope, "error", "La cuenta no pertenece al workspace del movimiento.");
     }
 
-    if (category.owner_type !== payload.owner_type || category.kind !== payload.kind) {
-      redirectWithMessage("/movements", "error", "La categoria no coincide con el ambito y tipo del movimiento.");
+    if (categoryData!.workspace_id !== payload.workspace_id || categoryData!.kind !== payload.kind) {
+      redirectWithMessage("/movements", scope, "error", "La categoria no coincide con el workspace y tipo del movimiento.");
     }
 
     const query = typeof id === "string" && id
@@ -254,40 +290,85 @@ export async function saveMovementAction(formData: FormData) {
     const { error } = await query;
 
     if (error) {
-      redirectWithMessage("/movements", "error", error.message);
+      redirectWithMessage("/movements", scope, "error", error.message);
     }
 
     revalidatePath("/");
+    revalidatePath("/reports");
     revalidatePath("/accounts");
+    revalidatePath("/categories");
     revalidatePath("/movements");
-    redirectWithMessage("/movements", "success", typeof id === "string" && id ? "Movimiento actualizado." : "Movimiento creado.");
+    redirectWithMessage("/movements", scope, "success", typeof id === "string" && id ? "Movimiento actualizado." : "Movimiento creado.");
   } catch (error) {
-    if (error instanceof Error) {
-      redirectWithMessage("/movements", "error", error.message);
+    if (isRedirectError(error)) {
+      throw error;
     }
 
-    redirectWithMessage("/movements", "error", "No fue posible guardar el movimiento.");
+    if (error instanceof Error) {
+      redirectWithMessage("/movements", scope, "error", error.message);
+    }
+
+    redirectWithMessage("/movements", scope, "error", "No fue posible guardar el movimiento.");
   }
 }
 
 export async function deleteMovementAction(formData: FormData) {
+  const scope = getScopeValue(formData);
+
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const { error } = await supabase.from("movements").delete().eq("id", getRequiredString(formData, "id"));
 
     if (error) {
-      redirectWithMessage("/movements", "error", error.message);
+      redirectWithMessage("/movements", scope, "error", error.message);
     }
 
     revalidatePath("/");
+    revalidatePath("/reports");
     revalidatePath("/accounts");
+    revalidatePath("/categories");
     revalidatePath("/movements");
-    redirectWithMessage("/movements", "success", "Movimiento eliminado.");
+    redirectWithMessage("/movements", scope, "success", "Movimiento eliminado.");
   } catch (error) {
-    if (error instanceof Error) {
-      redirectWithMessage("/movements", "error", error.message);
+    if (isRedirectError(error)) {
+      throw error;
     }
 
-    redirectWithMessage("/movements", "error", "No fue posible eliminar el movimiento.");
+    if (error instanceof Error) {
+      redirectWithMessage("/movements", scope, "error", error.message);
+    }
+
+    redirectWithMessage("/movements", scope, "error", "No fue posible eliminar el movimiento.");
+  }
+}
+
+export async function createBusinessWorkspaceAction(formData: FormData) {
+  const workspaceName = getOptionalString(formData, "business_workspace_name") ?? "Negocio";
+
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.rpc("complete_onboarding", {
+      selected_mode: "personal_and_business",
+      business_workspace_name: workspaceName
+    });
+
+    if (error) {
+      redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    }
+
+    revalidatePath("/");
+    revalidatePath("/reports");
+    revalidatePath("/accounts");
+    revalidatePath("/categories");
+    revalidatePath("/movements");
+    redirect(withScope("/", "business", { success: "Workspace de negocio creado." }));
+  } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
+
+    redirect(withScope("/", "personal", {
+      error: error instanceof Error ? error.message : "No fue posible crear el workspace de negocio."
+    }));
   }
 }

@@ -4,8 +4,14 @@ import { formatCurrency, formatShortDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const data = await getDashboardData();
+type DashboardPageProps = {
+  searchParams?: {
+    scope?: string;
+  };
+};
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const data = await getDashboardData(searchParams?.scope);
 
   return (
     <div className="space-y-6">
@@ -19,16 +25,18 @@ export default async function DashboardPage() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <SectionCard title="Balances por cuenta" description="Saldo inicial mas movimientos acumulados.">
+        <SectionCard title="Balances por cuenta" description="Saldo inicial mas movimientos acumulados del workspace activo.">
           <div className="space-y-3">
             {data.accounts.length === 0 ? (
-              <EmptyState message="Crea al menos una cuenta para empezar a registrar movimientos." />
+              <EmptyState message="Crea al menos una cuenta en el workspace activo para empezar." />
             ) : (
               data.accounts.map((account) => (
                 <div key={account.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
                   <div>
                     <p className="font-medium text-slate-900">{account.name}</p>
-                    <p className="text-sm text-slate-500">{account.owner_type === "personal" ? "Personal" : "Negocio"} - {account.account_type}</p>
+                    <p className="text-sm text-slate-500">
+                      {account.workspace?.name ?? "Workspace"} - {account.workspace?.kind === "personal" ? "Personal" : "Negocio"} - {account.account_type}
+                    </p>
                   </div>
                   <p className="text-right text-sm font-semibold text-slate-900">{formatCurrency(account.current_balance, account.currency)}</p>
                 </div>
@@ -55,10 +63,10 @@ export default async function DashboardPage() {
           ) : (
             <div className="space-y-3">
               {data.reports.expenseByCategory.slice(0, 6).map((item) => (
-                <div key={`${item.owner_type}-${item.category_name}`} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
+                <div key={`${item.workspace_kind}-${item.category_name}`} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
                   <div>
                     <p className="font-medium text-slate-900">{item.category_name}</p>
-                    <p className="text-sm text-slate-500">{item.owner_type === "personal" ? "Personal" : "Negocio"}</p>
+                    <p className="text-sm text-slate-500">{item.workspace_name} - {item.workspace_kind === "personal" ? "Personal" : "Negocio"}</p>
                   </div>
                   <p className="font-semibold text-slate-900">{formatCurrency(item.total)}</p>
                 </div>
@@ -67,7 +75,7 @@ export default async function DashboardPage() {
           )}
         </SectionCard>
 
-        <SectionCard title="Resumen personal vs negocio" description="Comparacion del mes actual por ambito.">
+        <SectionCard title="Resumen personal vs negocio" description="Comparacion del mes actual por tipo de workspace.">
           <div className="space-y-3">
             {data.reports.personalVsBusiness.map((item) => (
               <div key={item.label} className="rounded-2xl border border-slate-200 px-4 py-3">
@@ -86,7 +94,7 @@ export default async function DashboardPage() {
         </SectionCard>
       </section>
 
-      <SectionCard title="Ultimos movimientos" description="Vista rapida de la actividad mas reciente.">
+      <SectionCard title="Ultimos movimientos" description="Vista rapida de la actividad mas reciente del workspace activo.">
         {data.recentMovements.length === 0 ? (
           <EmptyState message="Aun no hay movimientos registrados." />
         ) : (
@@ -96,6 +104,7 @@ export default async function DashboardPage() {
                 <tr>
                   <th className="pb-3 font-medium">Fecha</th>
                   <th className="pb-3 font-medium">Descripcion</th>
+                  <th className="pb-3 font-medium">Workspace</th>
                   <th className="pb-3 font-medium">Cuenta</th>
                   <th className="pb-3 font-medium">Categoria</th>
                   <th className="pb-3 font-medium">Tipo</th>
@@ -107,6 +116,7 @@ export default async function DashboardPage() {
                   <tr key={movement.id}>
                     <td className="py-3 text-slate-600">{formatShortDate(movement.movement_date)}</td>
                     <td className="py-3 font-medium text-slate-900">{movement.description}</td>
+                    <td className="py-3 text-slate-600">{movement.workspace?.name ?? "-"}</td>
                     <td className="py-3 text-slate-600">{movement.account?.name ?? "-"}</td>
                     <td className="py-3 text-slate-600">{movement.category?.name ?? "-"}</td>
                     <td className="py-3 text-slate-600">{movement.kind === "income" ? "Ingreso" : "Gasto"}</td>

@@ -1,5 +1,9 @@
 create extension if not exists "pgcrypto";
 
+alter table if exists public.movements rename to legacy_movements;
+alter table if exists public.accounts rename to legacy_accounts;
+alter table if exists public.categories rename to legacy_categories;
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text unique,
@@ -229,6 +233,25 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row
 execute function public.handle_new_user();
+
+insert into public.profiles (id, email, full_name)
+select
+  id,
+  email,
+  coalesce(raw_user_meta_data ->> 'full_name', raw_user_meta_data ->> 'name')
+from auth.users
+on conflict (id) do update
+set email = excluded.email;
+
+do $$
+declare
+  profile_row record;
+begin
+  for profile_row in select id from public.profiles loop
+    perform public.ensure_personal_workspace_for_user(profile_row.id);
+  end loop;
+end;
+$$;
 
 create or replace function public.complete_onboarding(
   selected_mode text,
@@ -493,3 +516,115 @@ to authenticated
 using (public.is_workspace_owner(workspace_id));
 
 grant execute on function public.complete_onboarding(text, text) to authenticated;
+
+create or replace function public.migrate_legacy_data_to_user(target_user_id uuid)
+returns table (
+  personal_workspace_id uuid,
+  business_workspace_id uuid,
+  imported_accounts integer,
+  imported_categories integer,
+  imported_movements integer
+)
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  has_business_data boolean;
+begin
+  if not exists (select 1 from auth.users where id = target_user_id) then
+    raise exception 'El usuario % no existe en auth.users.', target_user_id;
+  end if;
+
+  if to_regclass('public.legacy_accounts') is null
+    or to_regclass('public.legacy_categories') is null
+    or to_regclass('public.legacy_movements') is null then
+    raise exception 'Las tablas legacy no existen. Esta funcion solo aplica despues de la migracion.';
+  end if;
+
+  insert into public.profiles (id, email, full_name)
+  select
+    id,
+    email,
+    coalesce(raw_user_meta_data ->> 'full_name', raw_user_meta_data ->> 'name')
+  from auth.users
+  where id = target_user_id
+  on conflict (id) do update
+  set email = excluded.email;
+
+  personal_workspace_id := public.ensure_personal_workspace_for_user(target_user_id);
+
+  select exists (
+    select 1 from public.legacy_accounts where owner_type = 'business'
+    union all
+    select 1 from public.legacy_categories where owner_type = 'business'
+    union all
+    select 1 from public.legacy_movements where owner_type = 'business'
+  )
+  into has_business_data;
+
+  if has_business_data then
+    business_workspace_id := public.ensure_business_workspace_for_user(target_user_id, 'Negocio');
+  else
+    business_workspace_id := null;
+  end if;
+
+  insert into public.accounts (id, workspace_id, name, account_type, currency, initial_balance, is_active, created_at)
+  select
+    id,
+    case when owner_type = 'personal' then personal_workspace_id else business_workspace_id end,
+    name,
+    account_type,
+    currency,
+    initial_balance,
+    is_active,
+    created_at
+  from public.legacy_accounts
+  where owner_type = 'personal'
+     or (owner_type = 'business' and business_workspace_id is not null)
+  on conflict (id) do nothing;
+
+  get diagnostics imported_accounts = row_count;
+
+  insert into public.categories (id, workspace_id, name, kind, created_at)
+  select
+    id,
+    case when owner_type = 'personal' then personal_workspace_id else business_workspace_id end,
+    name,
+    kind,
+    created_at
+  from public.legacy_categories
+  where owner_type = 'personal'
+     or (owner_type = 'business' and business_workspace_id is not null)
+  on conflict (id) do nothing;
+
+  get diagnostics imported_categories = row_count;
+
+  insert into public.movements (id, workspace_id, movement_date, description, amount, kind, account_id, category_id, notes, created_at)
+  select
+    id,
+    case when owner_type = 'personal' then personal_workspace_id else business_workspace_id end,
+    movement_date,
+    description,
+    amount,
+    kind,
+    account_id,
+    category_id,
+    notes,
+    created_at
+  from public.legacy_movements
+  where owner_type = 'personal'
+     or (owner_type = 'business' and business_workspace_id is not null)
+  on conflict (id) do nothing;
+
+  get diagnostics imported_movements = row_count;
+
+  update public.profiles
+  set
+    onboarding_mode = case when business_workspace_id is null then 'personal_only' else 'personal_and_business' end,
+    onboarding_completed = true
+  where id = target_user_id;
+
+  return next;
+end;
+$$;

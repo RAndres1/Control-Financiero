@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { Account, Category, Movement, OwnerType } from "@/lib/types";
-import { getMonthRange, getPreviousMonthRange } from "@/lib/utils";
+import type { Account, Category, Movement, Workspace, WorkspaceKind, WorkspaceScope } from "@/lib/types";
+import { getMonthRange, getPreviousMonthRange, getValidWorkspaceScope } from "@/lib/utils";
 
 type MetricSet = {
   income: number;
@@ -10,7 +10,8 @@ type MetricSet = {
 
 type CategoryBreakdown = {
   category_name: string;
-  owner_type: OwnerType;
+  workspace_kind: WorkspaceKind;
+  workspace_name: string;
   total: number;
 };
 
@@ -20,7 +21,15 @@ type MonthlyComparisonItem = {
   previous: MetricSet;
 };
 
+export type WorkspaceScopeData = {
+  scope: WorkspaceScope;
+  workspaceIds: string[];
+  workspaces: Workspace[];
+  availableScopes: WorkspaceScope[];
+};
+
 export type DashboardData = {
+  workspaceScope: WorkspaceScopeData;
   totals: {
     personal: MetricSet;
     business: MetricSet;
@@ -41,25 +50,50 @@ export type DashboardData = {
   };
 };
 
-function sumByKind(movements: Movement[], ownerType?: OwnerType): MetricSet {
-  const filtered = ownerType ? movements.filter((item) => item.owner_type === ownerType) : movements;
+function sumByWorkspaceKind(movements: Movement[], workspaceKind?: WorkspaceKind): MetricSet {
+  const filtered = workspaceKind ? movements.filter((item) => item.workspace?.kind === workspaceKind) : movements;
   const income = filtered.filter((item) => item.kind === "income").reduce((total, item) => total + Number(item.amount), 0);
   const expense = filtered.filter((item) => item.kind === "expense").reduce((total, item) => total + Number(item.amount), 0);
 
   return { income, expense, balance: income - expense };
 }
 
+function groupByCategory(movements: Movement[], kind: "income" | "expense") {
+  const grouped = new Map<string, CategoryBreakdown>();
+
+  movements
+    .filter((movement) => movement.kind === kind)
+    .forEach((movement) => {
+      const workspaceKind = movement.workspace?.kind ?? "personal";
+      const workspaceName = movement.workspace?.name ?? (workspaceKind === "personal" ? "Personal" : "Negocio");
+      const categoryName = movement.category?.name ?? "Sin categoria";
+      const key = `${workspaceKind}:${categoryName}`;
+      const current = grouped.get(key);
+
+      if (current) {
+        current.total += Number(movement.amount);
+        return;
+      }
+
+      grouped.set(key, {
+        category_name: categoryName,
+        workspace_kind: workspaceKind,
+        workspace_name: workspaceName,
+        total: Number(movement.amount)
+      });
+    });
+
+  return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
+}
+
 function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
   const insights: string[] = [];
-  const currentPersonal = sumByKind(currentMonth, "personal");
-  const previousPersonal = sumByKind(previousMonth, "personal");
-  const currentBusiness = sumByKind(currentMonth, "business");
-  const previousBusiness = sumByKind(previousMonth, "business");
-  const currentGlobal = sumByKind(currentMonth);
-  const previousGlobal = sumByKind(previousMonth);
-
+  const currentPersonal = sumByWorkspaceKind(currentMonth, "personal");
+  const currentBusiness = sumByWorkspaceKind(currentMonth, "business");
+  const currentGlobal = sumByWorkspaceKind(currentMonth);
+  const previousGlobal = sumByWorkspaceKind(previousMonth);
   const currentExpenses = currentMonth.filter((item) => item.kind === "expense");
-  const personalExpenses = currentMonth.filter((item) => item.kind === "expense" && item.owner_type === "personal");
+  const personalExpenses = currentMonth.filter((item) => item.kind === "expense" && item.workspace?.kind === "personal");
 
   if (currentGlobal.expense > previousGlobal.expense && previousGlobal.expense > 0) {
     const growth = Math.round(((currentGlobal.expense - previousGlobal.expense) / previousGlobal.expense) * 100);
@@ -70,7 +104,7 @@ function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
     const topExpenseCategory = groupByCategory(currentMonth, "expense")[0];
     if (topExpenseCategory) {
       insights.push(
-        `Tu mayor gasto del mes esta en ${topExpenseCategory.category_name} (${topExpenseCategory.owner_type === "personal" ? "personal" : "negocio"}), con ${topExpenseCategory.total.toLocaleString("es-CO")} en total.`
+        `Tu mayor gasto del mes esta en ${topExpenseCategory.category_name} (${topExpenseCategory.workspace_kind === "personal" ? "personal" : "negocio"}), con ${topExpenseCategory.total.toLocaleString("es-CO")} en total.`
       );
     }
   }
@@ -84,7 +118,7 @@ function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
     insights.push("Tu flujo neto del mes es negativo. Revisa primero los gastos variables.");
   }
 
-  if (personalExpenses.length > 0) {
+  if (personalExpenses.length > 0 && currentPersonal.expense > 0) {
     const personalExpenseCategories = groupByCategory(personalExpenses, "expense");
     const topTwoShare =
       personalExpenseCategories.slice(0, 2).reduce((total, item) => total + item.total, 0) / currentPersonal.expense;
@@ -100,9 +134,8 @@ function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
   currentMonth
     .filter((item) => item.kind === "expense")
     .forEach((item) => {
-      const key = item.account_id;
-      const current = currentAccountDrops.get(key);
-      currentAccountDrops.set(key, {
+      const current = currentAccountDrops.get(item.account_id);
+      currentAccountDrops.set(item.account_id, {
         name: item.account?.name ?? "Cuenta",
         expense: (current?.expense ?? 0) + Number(item.amount)
       });
@@ -151,42 +184,89 @@ function withAccountBalances(accounts: Account[], movements: Pick<Movement, "acc
   });
 }
 
-function groupByCategory(movements: Movement[], kind: "income" | "expense") {
-  const grouped = new Map<string, CategoryBreakdown>();
+function resolveAvailableScopes(workspaces: Workspace[]) {
+  const scopes: WorkspaceScope[] = [];
+  const hasPersonal = workspaces.some((workspace) => workspace.kind === "personal");
+  const hasBusiness = workspaces.some((workspace) => workspace.kind === "business");
 
-  movements
-    .filter((movement) => movement.kind === kind)
-    .forEach((movement) => {
-      const key = `${movement.owner_type}:${movement.category?.name ?? "Sin categoria"}`;
-      const current = grouped.get(key);
+  if (hasPersonal) {
+    scopes.push("personal");
+  }
 
-      if (current) {
-        current.total += Number(movement.amount);
-        return;
-      }
+  if (hasBusiness) {
+    scopes.push("business");
+  }
 
-      grouped.set(key, {
-        category_name: movement.category?.name ?? "Sin categoria",
-        owner_type: movement.owner_type,
-        total: Number(movement.amount)
-      });
-    });
+  if (hasPersonal && hasBusiness) {
+    scopes.push("all");
+  }
 
-  return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
+  return scopes;
 }
 
-export async function getAccounts() {
-  const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase.from("accounts").select("*").order("name");
+function resolveScope(workspaces: Workspace[], requestedScope?: string): WorkspaceScope {
+  const availableScopes = resolveAvailableScopes(workspaces);
+  const preferredScope = getValidWorkspaceScope(requestedScope);
+
+  if (availableScopes.includes(preferredScope)) {
+    return preferredScope;
+  }
+
+  return availableScopes[0] ?? "personal";
+}
+
+export async function getWorkspaceScopeData(requestedScope?: string): Promise<WorkspaceScopeData> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("workspaces").select("*").order("kind").order("name");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const workspaces = (data ?? []) as Workspace[];
+  const scope = resolveScope(workspaces, requestedScope);
+  const availableScopes = resolveAvailableScopes(workspaces);
+  const workspaceIds = scope === "all"
+    ? workspaces.map((workspace) => workspace.id)
+    : workspaces.filter((workspace) => workspace.kind === scope).map((workspace) => workspace.id);
+
+  return {
+    scope,
+    workspaceIds,
+    workspaces,
+    availableScopes
+  };
+}
+
+export async function getAccounts(workspaceIds: string[]) {
+  if (workspaceIds.length === 0) {
+    return [] as Account[];
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("*, workspace:workspaces(id, name, kind)")
+    .in("workspace_id", workspaceIds)
+    .order("name");
+
   if (error) throw new Error(error.message);
   return (data ?? []) as Account[];
 }
 
-export async function getAccountsWithBalance() {
-  const supabase = createSupabaseServerClient();
+export async function getAccountsWithBalance(workspaceIds: string[]) {
+  if (workspaceIds.length === 0) {
+    return [] as Array<Account & { current_balance: number }>;
+  }
+
+  const supabase = await createSupabaseServerClient();
   const [{ data: accountsData, error: accountsError }, { data: movementsData, error: movementsError }] = await Promise.all([
-    supabase.from("accounts").select("*").order("name"),
-    supabase.from("movements").select("account_id, amount, kind")
+    supabase
+      .from("accounts")
+      .select("*, workspace:workspaces(id, name, kind)")
+      .in("workspace_id", workspaceIds)
+      .order("name"),
+    supabase.from("movements").select("account_id, amount, kind").in("workspace_id", workspaceIds)
   ]);
 
   if (accountsError || movementsError) {
@@ -199,18 +279,32 @@ export async function getAccountsWithBalance() {
   return withAccountBalances(accounts, movements);
 }
 
-export async function getCategories() {
-  const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase.from("categories").select("*").order("name");
+export async function getCategories(workspaceIds: string[]) {
+  if (workspaceIds.length === 0) {
+    return [] as Category[];
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("categories")
+    .select("*, workspace:workspaces(id, name, kind)")
+    .in("workspace_id", workspaceIds)
+    .order("name");
+
   if (error) throw new Error(error.message);
   return (data ?? []) as Category[];
 }
 
-export async function getMovements(limit?: number) {
-  const supabase = createSupabaseServerClient();
+export async function getMovements(workspaceIds: string[], limit?: number) {
+  if (workspaceIds.length === 0) {
+    return [] as Movement[];
+  }
+
+  const supabase = await createSupabaseServerClient();
   let query = supabase
     .from("movements")
-    .select("*, account:accounts(name), category:categories(name)")
+    .select("*, account:accounts(name), category:categories(name), workspace:workspaces(id, name, kind)")
+    .in("workspace_id", workspaceIds)
     .order("movement_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -223,16 +317,24 @@ export async function getMovements(limit?: number) {
   return (data ?? []) as Movement[];
 }
 
-export async function getFilteredMovements(filters?: {
-  kind?: string;
-  accountId?: string;
-  categoryId?: string;
-  month?: string;
-}) {
-  const supabase = createSupabaseServerClient();
+export async function getFilteredMovements(
+  workspaceIds: string[],
+  filters?: {
+    kind?: string;
+    accountId?: string;
+    categoryId?: string;
+    month?: string;
+  }
+) {
+  if (workspaceIds.length === 0) {
+    return [] as Movement[];
+  }
+
+  const supabase = await createSupabaseServerClient();
   let query = supabase
     .from("movements")
-    .select("*, account:accounts(name), category:categories(name)")
+    .select("*, account:accounts(name), category:categories(name), workspace:workspaces(id, name, kind)")
+    .in("workspace_id", workspaceIds)
     .order("movement_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -261,10 +363,42 @@ export async function getFilteredMovements(filters?: {
   return (data ?? []) as Movement[];
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  const supabase = createSupabaseServerClient();
+export async function getDashboardData(requestedScope?: string): Promise<DashboardData> {
+  const supabase = await createSupabaseServerClient();
+  const workspaceScope = await getWorkspaceScopeData(requestedScope);
   const currentRange = getMonthRange();
   const previousRange = getPreviousMonthRange();
+
+  if (workspaceScope.workspaceIds.length === 0) {
+    return {
+      workspaceScope,
+      totals: {
+        personal: { income: 0, expense: 0, balance: 0 },
+        business: { income: 0, expense: 0, balance: 0 },
+        global: { income: 0, expense: 0, balance: 0 }
+      },
+      accounts: [],
+      recentMovements: [],
+      insights: ["No hay workspaces disponibles todavia."],
+      reports: {
+        expenseByCategory: [],
+        incomeByCategory: [],
+        monthlyComparison: [
+          { label: "Personal", current: { income: 0, expense: 0, balance: 0 }, previous: { income: 0, expense: 0, balance: 0 } },
+          { label: "Negocio", current: { income: 0, expense: 0, balance: 0 }, previous: { income: 0, expense: 0, balance: 0 } },
+          { label: "Global", current: { income: 0, expense: 0, balance: 0 }, previous: { income: 0, expense: 0, balance: 0 } }
+        ],
+        personalVsBusiness: [
+          { label: "Personal", metrics: { income: 0, expense: 0, balance: 0 } },
+          { label: "Negocio", metrics: { income: 0, expense: 0, balance: 0 } }
+        ],
+        netFlow: {
+          currentMonth: 0,
+          previousMonth: 0
+        }
+      }
+    };
+  }
 
   const [
     { data: accountsData, error: accountsError },
@@ -272,16 +406,26 @@ export async function getDashboardData(): Promise<DashboardData> {
     { data: currentData, error: currentError },
     { data: previousData, error: previousError }
   ] = await Promise.all([
-    supabase.from("accounts").select("*").order("name"),
-    supabase.from("movements").select("*, account:accounts(name), category:categories(name)").order("movement_date", { ascending: false }),
+    supabase
+      .from("accounts")
+      .select("*, workspace:workspaces(id, name, kind)")
+      .in("workspace_id", workspaceScope.workspaceIds)
+      .order("name"),
     supabase
       .from("movements")
-      .select("*, account:accounts(name), category:categories(name)")
+      .select("*, account:accounts(name), category:categories(name), workspace:workspaces(id, name, kind)")
+      .in("workspace_id", workspaceScope.workspaceIds)
+      .order("movement_date", { ascending: false }),
+    supabase
+      .from("movements")
+      .select("*, account:accounts(name), category:categories(name), workspace:workspaces(id, name, kind)")
+      .in("workspace_id", workspaceScope.workspaceIds)
       .gte("movement_date", currentRange.start)
       .lte("movement_date", currentRange.end),
     supabase
       .from("movements")
-      .select("*, account:accounts(name), category:categories(name)")
+      .select("*, account:accounts(name), category:categories(name), workspace:workspaces(id, name, kind)")
+      .in("workspace_id", workspaceScope.workspaceIds)
       .gte("movement_date", previousRange.start)
       .lte("movement_date", previousRange.end)
   ]);
@@ -295,14 +439,15 @@ export async function getDashboardData(): Promise<DashboardData> {
   const currentMonthMovements = (currentData ?? []) as Movement[];
   const previousMonthMovements = (previousData ?? []) as Movement[];
   const accountsWithBalance = withAccountBalances(accounts, movements);
-  const currentPersonal = sumByKind(currentMonthMovements, "personal");
-  const currentBusiness = sumByKind(currentMonthMovements, "business");
-  const currentGlobal = sumByKind(currentMonthMovements);
-  const previousPersonal = sumByKind(previousMonthMovements, "personal");
-  const previousBusiness = sumByKind(previousMonthMovements, "business");
-  const previousGlobal = sumByKind(previousMonthMovements);
+  const currentPersonal = sumByWorkspaceKind(currentMonthMovements, "personal");
+  const currentBusiness = sumByWorkspaceKind(currentMonthMovements, "business");
+  const currentGlobal = sumByWorkspaceKind(currentMonthMovements);
+  const previousPersonal = sumByWorkspaceKind(previousMonthMovements, "personal");
+  const previousBusiness = sumByWorkspaceKind(previousMonthMovements, "business");
+  const previousGlobal = sumByWorkspaceKind(previousMonthMovements);
 
   return {
+    workspaceScope,
     totals: {
       personal: currentPersonal,
       business: currentBusiness,

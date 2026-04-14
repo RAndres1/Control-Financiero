@@ -4,8 +4,14 @@ import { formatCurrency } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function ReportsPage() {
-  const data = await getDashboardData();
+type ReportsPageProps = {
+  searchParams?: {
+    scope?: string;
+  };
+};
+
+export default async function ReportsPage({ searchParams }: ReportsPageProps) {
+  const data = await getDashboardData(searchParams?.scope);
 
   return (
     <div className="space-y-6">
@@ -16,10 +22,10 @@ export default async function ReportsPage() {
           ) : (
             <div className="space-y-3">
               {data.reports.expenseByCategory.map((item) => (
-                <div key={`${item.owner_type}-${item.category_name}`} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
+                <div key={`${item.workspace_kind}-${item.category_name}`} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
                   <div>
                     <p className="font-medium text-slate-900">{item.category_name}</p>
-                    <p className="text-sm text-slate-500">{item.owner_type === "personal" ? "Personal" : "Negocio"}</p>
+                    <p className="text-sm text-slate-500">{item.workspace_name} - {item.workspace_kind === "personal" ? "Personal" : "Negocio"}</p>
                   </div>
                   <p className="font-semibold text-slate-900">{formatCurrency(item.total)}</p>
                 </div>
@@ -34,10 +40,10 @@ export default async function ReportsPage() {
           ) : (
             <div className="space-y-3">
               {data.reports.incomeByCategory.map((item) => (
-                <div key={`${item.owner_type}-${item.category_name}`} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
+                <div key={`${item.workspace_kind}-${item.category_name}`} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
                   <div>
                     <p className="font-medium text-slate-900">{item.category_name}</p>
-                    <p className="text-sm text-slate-500">{item.owner_type === "personal" ? "Personal" : "Negocio"}</p>
+                    <p className="text-sm text-slate-500">{item.workspace_name} - {item.workspace_kind === "personal" ? "Personal" : "Negocio"}</p>
                   </div>
                   <p className="font-semibold text-slate-900">{formatCurrency(item.total)}</p>
                 </div>

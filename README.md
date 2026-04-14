@@ -19,10 +19,9 @@ MVP de finanzas personales y de emprendimiento construido con Next.js, TypeScrip
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-Nota: para este MVP la app usa `SUPABASE_SERVICE_ROLE_KEY` solo del lado servidor para simplificar CRUD sin autenticacion. No expongas esa llave en el navegador. Si luego agregas usuarios, pasa a auth + RLS.
+La app usa sesion autenticada de Supabase y RLS para el acceso normal a datos. `service_role` ya no forma parte del flujo normal de la app.
 
 ## Base de datos
 
