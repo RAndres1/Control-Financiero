@@ -251,7 +251,7 @@ export async function getAccounts(workspaceIds: string[]) {
     .order("name");
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as Account[];
+  return (data ?? []) as unknown as Account[];
 }
 
 export async function getAccountsWithBalance(workspaceIds: string[]) {
@@ -273,7 +273,7 @@ export async function getAccountsWithBalance(workspaceIds: string[]) {
     throw new Error(accountsError?.message || movementsError?.message);
   }
 
-  const accounts = (accountsData ?? []) as Account[];
+  const accounts = (accountsData ?? []) as unknown as Account[];
   const movements = (movementsData ?? []) as Pick<Movement, "account_id" | "amount" | "kind">[];
 
   return withAccountBalances(accounts, movements);
@@ -292,7 +292,7 @@ export async function getCategories(workspaceIds: string[]) {
     .order("name");
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as Category[];
+  return (data ?? []) as unknown as Category[];
 }
 
 export async function getMovements(workspaceIds: string[], limit?: number) {
@@ -314,7 +314,7 @@ export async function getMovements(workspaceIds: string[], limit?: number) {
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return (data ?? []) as Movement[];
+  return (data ?? []) as unknown as Movement[];
 }
 
 export async function getFilteredMovements(
@@ -360,7 +360,7 @@ export async function getFilteredMovements(
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return (data ?? []) as Movement[];
+  return (data ?? []) as unknown as Movement[];
 }
 
 export async function getDashboardData(requestedScope?: string): Promise<DashboardData> {
@@ -434,10 +434,10 @@ export async function getDashboardData(requestedScope?: string): Promise<Dashboa
     throw new Error(accountsError?.message || movementsError?.message || currentError?.message || previousError?.message);
   }
 
-  const accounts = (accountsData ?? []) as Account[];
-  const movements = (movementsData ?? []) as Movement[];
-  const currentMonthMovements = (currentData ?? []) as Movement[];
-  const previousMonthMovements = (previousData ?? []) as Movement[];
+  const accounts = (accountsData ?? []) as unknown as Account[];
+  const movements = (movementsData ?? []) as unknown as Movement[];
+  const currentMonthMovements = (currentData ?? []) as unknown as Movement[];
+  const previousMonthMovements = (previousData ?? []) as unknown as Movement[];
   const accountsWithBalance = withAccountBalances(accounts, movements);
   const currentPersonal = sumByWorkspaceKind(currentMonthMovements, "personal");
   const currentBusiness = sumByWorkspaceKind(currentMonthMovements, "business");
