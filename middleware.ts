@@ -5,6 +5,27 @@ import type { Database } from "@/lib/supabase/database.types";
 
 const publicRoutes = ["/login"];
 
+function isProfileOnboardingComplete(
+  profileData:
+    | {
+        onboarding_completed?: boolean | null;
+        financial_products?: string[] | null;
+        monthly_income_estimate?: number | null;
+        monthly_expense_estimate?: number | null;
+      }
+    | null
+) {
+  if (!profileData?.onboarding_completed) {
+    return false;
+  }
+
+  const financialProducts = profileData.financial_products ?? [];
+  const hasIncomeEstimate = profileData.monthly_income_estimate !== null && profileData.monthly_income_estimate !== undefined;
+  const hasExpenseEstimate = profileData.monthly_expense_estimate !== null && profileData.monthly_expense_estimate !== undefined;
+
+  return financialProducts.length > 0 && hasIncomeEstimate && hasExpenseEstimate;
+}
+
 export async function middleware(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-pathname", request.nextUrl.pathname);
@@ -51,11 +72,11 @@ export async function middleware(request: NextRequest) {
   if (user) {
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("onboarding_completed")
+      .select("onboarding_completed, financial_products, monthly_income_estimate, monthly_expense_estimate")
       .eq("id", user.id)
       .maybeSingle();
 
-    const onboardingCompleted = profileData?.onboarding_completed ?? false;
+    const onboardingCompleted = isProfileOnboardingComplete(profileData);
 
     if (!onboardingCompleted && request.nextUrl.pathname !== "/onboarding") {
       const url = request.nextUrl.clone();
