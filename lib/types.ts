@@ -2,6 +2,7 @@ export type WorkspaceKind = "personal" | "business";
 export type WorkspaceScope = WorkspaceKind | "all";
 export type MovementKind = "income" | "expense";
 export type AccountType = "cash" | "bank" | "wallet" | "credit_card" | "savings";
+export type FinancialProduct = "bank_account" | "credit_card" | "loan";
 
 export type Profile = {
   id: string;
@@ -9,6 +10,9 @@ export type Profile = {
   full_name: string | null;
   onboarding_mode: "personal_only" | "personal_and_business" | null;
   onboarding_completed: boolean;
+  financial_products: FinancialProduct[];
+  monthly_income_estimate: number | null;
+  monthly_expense_estimate: number | null;
   created_at: string;
   updated_at: string;
 };

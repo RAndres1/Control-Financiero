@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 
 import { LayoutShell } from "@/components/layout-shell";
@@ -13,12 +14,21 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const pathname = headers().get("x-pathname");
   const supabase = await createSupabaseServerClient();
   const {
     data: { user }
   } = await supabase.auth.getUser();
 
   if (!user) {
+    return (
+      <html lang="es">
+        <body>{children}</body>
+      </html>
+    );
+  }
+
+  if (pathname === "/onboarding") {
     return (
       <html lang="es">
         <body>{children}</body>

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { AccountType, MovementKind } from "@/lib/types";
+import type { AccountType, FinancialProduct, MovementKind } from "@/lib/types";
 import { withScope } from "@/lib/utils";
 
 function getRequiredString(formData: FormData, key: string) {
@@ -34,6 +34,20 @@ function getNumberValue(formData: FormData, key: string) {
   return value;
 }
 
+function getOptionalNumberValue(formData: FormData, key: string) {
+  const value = getOptionalString(formData, key);
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid number: ${key}`);
+  }
+
+  return parsed;
+}
+
 function getScopeValue(formData: FormData) {
   return getOptionalString(formData, "scope") ?? "personal";
 }
@@ -56,6 +70,13 @@ function getValidMovementKind(value: string): MovementKind {
   }
 
   return value;
+}
+
+function getValidFinancialProducts(formData: FormData): FinancialProduct[] {
+  const values = formData.getAll("financial_products");
+  const validProducts: FinancialProduct[] = ["bank_account", "credit_card", "loan"];
+
+  return values.filter((value): value is FinancialProduct => typeof value === "string" && validProducts.includes(value as FinancialProduct));
 }
 
 export async function saveAccountAction(formData: FormData) {
@@ -241,27 +262,20 @@ export async function saveMovementAction(formData: FormData) {
     const supabase = await createSupabaseServerClient();
     const id = formData.get("id");
     const amount = getNumberValue(formData, "amount");
-    const descriptionValue = (formData.get("description") as string | null)?.trim() || "";
+    const descriptionValue = getOptionalString(formData, "description") ?? "";
     const notesValue = (formData.get("notes") as string | null)?.trim() || null;
+    const movementKind = getValidMovementKind(getRequiredString(formData, "kind"));
+    const workspaceId = getRequiredString(formData, "workspace_id");
+    const accountId = getRequiredString(formData, "account_id");
+    const categoryId = getRequiredString(formData, "category_id");
 
     if (amount <= 0) {
       redirectWithMessage("/movements", scope, "error", "El monto debe ser mayor que 0.");
     }
 
-    const payload = {
-      workspace_id: getRequiredString(formData, "workspace_id"),
-      movement_date: getRequiredString(formData, "movement_date"),
-      description: descriptionValue || notesValue || "Movimiento sin descripcion",
-      amount,
-      kind: getValidMovementKind(getRequiredString(formData, "kind")),
-      account_id: getRequiredString(formData, "account_id"),
-      category_id: getRequiredString(formData, "category_id"),
-      notes: notesValue
-    };
-
     const [{ data: accountData, error: accountError }, { data: categoryData, error: categoryError }] = await Promise.all([
-      supabase.from("accounts").select("id, workspace_id").eq("id", payload.account_id).maybeSingle(),
-      supabase.from("categories").select("id, workspace_id, kind").eq("id", payload.category_id).maybeSingle()
+      supabase.from("accounts").select("id, workspace_id, name").eq("id", accountId).maybeSingle(),
+      supabase.from("categories").select("id, workspace_id, kind, name").eq("id", categoryId).maybeSingle()
     ]);
 
     if (accountError || categoryError) {
@@ -276,13 +290,29 @@ export async function saveMovementAction(formData: FormData) {
       redirectWithMessage("/movements", scope, "error", "La categoria seleccionada no existe.");
     }
 
-    if (accountData!.workspace_id !== payload.workspace_id) {
+    if (accountData!.workspace_id !== workspaceId) {
       redirectWithMessage("/movements", scope, "error", "La cuenta no pertenece al workspace del movimiento.");
     }
 
-    if (categoryData!.workspace_id !== payload.workspace_id || categoryData!.kind !== payload.kind) {
+    if (categoryData!.workspace_id !== workspaceId || categoryData!.kind !== movementKind) {
       redirectWithMessage("/movements", scope, "error", "La categoria no coincide con el workspace y tipo del movimiento.");
     }
+
+    const generatedDescription =
+      movementKind === "expense"
+        ? `Gasto en ${categoryData!.name}`
+        : `Ingreso por ${categoryData!.name}`;
+
+    const payload = {
+      workspace_id: workspaceId,
+      movement_date: getRequiredString(formData, "movement_date"),
+      description: descriptionValue || generatedDescription,
+      amount,
+      kind: movementKind,
+      account_id: accountId,
+      category_id: categoryId,
+      notes: notesValue
+    };
 
     const query = typeof id === "string" && id
       ? supabase.from("movements").update(payload).eq("id", id)
@@ -370,5 +400,58 @@ export async function createBusinessWorkspaceAction(formData: FormData) {
     redirect(withScope("/", "personal", {
       error: error instanceof Error ? error.message : "No fue posible crear el workspace de negocio."
     }));
+  }
+}
+
+export async function saveOnboardingAction(formData: FormData) {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const wantsBusinessWorkspace = formData.get("wants_business_workspace") === "on";
+    const businessWorkspaceName = getOptionalString(formData, "business_workspace_name") ?? "Negocio";
+    const financialProducts = getValidFinancialProducts(formData);
+    const monthlyIncomeEstimate = getOptionalNumberValue(formData, "monthly_income_estimate");
+    const monthlyExpenseEstimate = getOptionalNumberValue(formData, "monthly_expense_estimate");
+
+    const { error: onboardingError } = await supabase.rpc("complete_onboarding", {
+      selected_mode: wantsBusinessWorkspace ? "personal_and_business" : "personal_only",
+      business_workspace_name: businessWorkspaceName
+    });
+
+    if (onboardingError) {
+      redirect(`/onboarding?error=${encodeURIComponent(onboardingError.message)}`);
+    }
+
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      redirect("/login");
+    }
+
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({
+        financial_products: financialProducts,
+        monthly_income_estimate: monthlyIncomeEstimate,
+        monthly_expense_estimate: monthlyExpenseEstimate
+      })
+      .eq("id", user.id);
+
+    if (profileError) {
+      redirect(`/onboarding?error=${encodeURIComponent(profileError.message)}`);
+    }
+
+    revalidatePath("/");
+    revalidatePath("/onboarding");
+    redirect("/?success=Perfil inicial configurado.");
+  } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
+
+    redirect(
+      `/onboarding?error=${encodeURIComponent(error instanceof Error ? error.message : "No fue posible guardar el onboarding.")}`
+    );
   }
 }

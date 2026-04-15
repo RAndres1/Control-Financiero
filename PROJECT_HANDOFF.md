@@ -1,244 +1,197 @@
 # Project Handoff
 
-## Estado general
+## Estado actual real
 
-La app base ya funciona con:
+La app ya no esta en el MVP original sin auth.
 
-- Next.js
+El estado actual es:
+
+- Next.js 14 con App Router
 - TypeScript
 - Tailwind
-- Supabase/Postgres
+- Supabase SSR con cookies
+- login/signup con Supabase Auth
+- RLS activa
+- modelo multiusuario por `workspaces`
+- despliegue exitoso en Vercel
 
-La arquitectura se mantuvo simple y server-side:
+La version desplegada ya compilo en Vercel despues de corregir errores de tipado en queries.
 
-- `app/` con App Router
-- `lib/actions.ts` para server actions CRUD
-- `lib/data/queries.ts` para lecturas y agregados
-- `lib/supabase/server.ts` para cliente Supabase del lado servidor
-- sin estado global
-- sin librerias extra innecesarias
-- sin auth por ahora
+## Lo que quedo funcionando
 
-## Modulos ya cerrados
-
-### Accounts
-
-Listo:
-
-- crear cuenta
-- listar cuentas
-- editar cuenta
-- eliminar cuenta
-- validacion de:
-  - nombre obligatorio
-  - saldo inicial >= 0
-  - owner_type valido
-- saldo actual calculado con:
-  - `initial_balance + incomes - expenses`
-- refresco correcto de `/`, `/accounts` y `/movements`
+### Auth
 
 Archivos clave:
 
-- `app/accounts/page.tsx`
-- `lib/actions.ts`
+- `app/login/page.tsx`
+- `lib/auth-actions.ts`
+- `lib/supabase/server.ts`
+- `middleware.ts`
+
+Estado:
+
+- login con correo y contrasena
+- signup con Supabase Auth
+- persistencia por cookies SSR
+- proteccion de rutas con `middleware`
+- logout funcional
+
+Problemas resueltos:
+
+- `Invalid API key` causado por una `NEXT_PUBLIC_SUPABASE_ANON_KEY` mal copiada en `.env.local`
+- bloque debug de login removido
+
+### Multiworkspace
+
+Archivos clave:
+
 - `lib/data/queries.ts`
-
-### Categories
-
-Listo:
-
-- crear categoria
-- listar categorias
-- editar categoria
-- eliminar categoria
-- diferenciacion por:
-  - `owner_type`
-  - `kind`
-- nombre obligatorio
-- evita duplicados razonables por:
-  - `lower(name) + owner_type + kind`
-- borrado seguro:
-  - no permite eliminar categorias con movimientos asociados
-
-Integracion con movimientos:
-
-- el selector de categorias en `movements` solo muestra categorias compatibles con:
-  - `owner_type`
-  - `kind`
-- el backend tambien valida esa compatibilidad
-
-Archivos clave:
-
-- `app/categories/page.tsx`
+- `lib/actions.ts`
+- `components/workspace-controls.tsx`
+- `components/layout-shell.tsx`
 - `components/movement-category-field.tsx`
-- `app/movements/page.tsx`
-- `lib/actions.ts`
+- `lib/types.ts`
 - `supabase/schema.sql`
+- `supabase/migrations/20260414_multitenant_workspaces.sql`
 
-### Movements
+Estado:
 
-Listo:
+- `accounts`, `categories` y `movements` dependen de `workspace_id`
+- `workspaces.kind` define `personal` o `business`
+- scope por query string: `personal | business | all`
+- dashboard, reportes y CRUDs ya filtran por `workspaceIds`
+- selector global de scope ya no muestra scopes invalidos
 
-- crear movimiento
-- listar movimientos
-- editar movimiento
-- eliminar movimiento
-- filtros simples por:
-  - tipo
-  - cuenta
-  - categoria
-  - mes
+Problemas resueltos:
 
-Reglas actuales:
+- antes la UI dejaba elegir `Negocio` y `Ambos` aunque el usuario no tuviera ese workspace
+- ahora solo muestra scopes realmente disponibles
 
-- `amount > 0`
-- `account_id` obligatorio
-- `category_id` obligatorio
-- `kind` valido
-- `owner_type` valido
-- `income` suma al balance
-- `expense` resta al balance
-- `description` puede quedar vacio:
-  - si no hay `description`, usa `notes`
-  - si no hay ninguno, guarda `"Movimiento sin descripcion"`
+### Crear workspace business
 
-Refresco correcto:
+Estado:
 
-- `/`
-- `/accounts`
-- `/movements`
+- la base ya soportaba `complete_onboarding(...)`
+- faltaba una accion/UI para crear workspace `business`
+- se agrego `createBusinessWorkspaceAction`
+- se agrego control en el header para crear el espacio de negocio si no existe
 
 Archivos clave:
 
-- `app/movements/page.tsx`
 - `lib/actions.ts`
-- `lib/data/queries.ts`
+- `components/layout-shell.tsx`
+- `lib/supabase/database.types.ts`
 
-### Dashboard
+### Supabase / permisos
 
-Listo:
+Problema resuelto:
 
-- ingresos del mes personal
-- gastos del mes personal
-- balance del mes personal
-- ingresos del mes negocio
-- gastos del mes negocio
-- balance global del mes
-- balances por cuenta
-- ultimos movimientos
-- bloque de insights simples
-- top de gasto por categoria
-- resumen personal vs negocio
+- error `permission denied for table workspaces`
 
-Archivo clave:
+Causa:
 
-- `app/page.tsx`
+- habia policies RLS pero faltaban `GRANT` SQL base para `authenticated`
 
-### Reportes basicos
+Se corrigio en:
 
-Listo en `/reports`:
-
-- gasto por categoria
-- ingreso por categoria
-- comparacion mensual simple
-- resumen personal vs negocio
-- flujo neto del mes
-
-Archivo clave:
-
-- `app/reports/page.tsx`
-
-## Insights simples ya implementados
-
-Reglas actuales en `lib/data/queries.ts`:
-
-- este mes gastaste mas que el mes anterior
-- tu categoria con mayor gasto del mes
-- el negocio gasto mas de lo que ingreso
-- el flujo neto del mes es negativo
-- los gastos personales estan concentrados en pocas categorias
-- una cuenta esta bajando mas rapido que el mes anterior
-
-Los insights:
-
-- no usan IA
-- son 100% basados en reglas
-- salen de movimientos reales del mes actual y anterior
-
-## Ruta actual del proyecto
-
-- `app/`
-  - `page.tsx`
-  - `reports/page.tsx`
-  - `accounts/page.tsx`
-  - `categories/page.tsx`
-  - `movements/page.tsx`
-- `components/`
-  - `layout-shell.tsx`
-  - `ui.tsx`
-  - `movement-category-field.tsx`
-- `lib/`
-  - `actions.ts`
-  - `data/queries.ts`
-  - `supabase/server.ts`
-  - `supabase/database.types.ts`
-  - `types.ts`
-  - `utils.ts`
 - `supabase/schema.sql`
+- `supabase/migrations/20260414_multitenant_workspaces.sql`
 
-## Supabase
+### Deploy
 
-Tablas activas:
+Estado:
 
-- `accounts`
-- `categories`
-- `movements`
+- cambios subidos a GitHub
+- deploy realizado en Vercel
 
-Puntos importantes:
+Commit importante para el build:
 
-- `movements.account_id` referencia `accounts.id`
-- `movements.category_id` referencia `categories.id`
-- `on delete restrict` evita borrar cuentas/categorias con movimientos asociados
-- hay indice unico para categorias:
-  - `lower(name), owner_type, kind`
+- `cfa5cdf` - `Fix query typing for Vercel build`
 
-Si se recrea la base o falta ese indice en un proyecto viejo, revisar `supabase/schema.sql`.
+## Cambio tecnico importante para recordar
 
-## Estado de compilacion
+En `lib/data/queries.ts` hubo que cambiar varios casts:
 
-Ultimo estado validado:
+- de `as Account[]`
+- a `as unknown as Account[]`
 
-- `npm run build` compila correctamente
+y equivalentes para `Category[]` y `Movement[]`.
 
-## Decisiones importantes
+Motivo:
 
-- no sobrearquitectar
-- mantener todo server-side mientras siga siendo MVP
-- sin auth por ahora
-- sin RLS por ahora
-- sin librerias de charts
-- sin IA compleja
-- UI simple y clara
+- `lib/supabase/database.types.ts` no tiene bien descritas las relaciones de joins
+- Supabase tipa ciertos `select(...)` con joins como `SelectQueryError<...>`
+- eso rompía `next build` en Vercel aunque el runtime real de la app funcionara
 
-## Siguientes pasos sugeridos
+Esto es un workaround pragmatico para despliegue rapido.
 
-Lo mas natural para continuar luego:
+## Pendientes reales
 
-1. filtros por fecha mas completos en dashboard/reportes
-2. semillas iniciales mas utiles
-3. exportacion CSV simple
-4. auth basica con Supabase cuando haga falta multiusuario
-5. presets de categorias por negocio/personal
-6. presupuesto mensual simple por categoria
+### 1. Onboarding formal
 
-## Nota para retomar
+La base soporta onboarding, pero la UI no esta terminada.
 
-Cuando retomes, lo primero que conviene revisar es:
+Falta:
+
+- `app/onboarding/page.tsx`
+- redirect en `app/layout.tsx` segun `profiles.onboarding_completed`
+
+Hoy la app se puede usar sin eso porque:
+
+- siempre se crea el workspace personal
+- el business se puede crear desde el header
+
+### 2. Tipos de Supabase
+
+Pendiente tecnico:
+
+- regenerar o corregir `lib/supabase/database.types.ts`
+- describir bien funciones y relaciones
+
+Motivo:
+
+- evitar casts `unknown`
+- recuperar tipado estricto de joins
+
+### 3. Verificacion post-deploy
+
+Antes de compartir mas ampliamente, validar en produccion:
+
+- signup
+- login
+- logout
+- persistencia de sesion
+- creacion de cuenta
+- creacion de categoria
+- creacion de movimiento
+- dashboard actualizado
+- creacion de workspace business
+- cambio entre `Personal`, `Negocio` y `Ambos`
+- aislamiento entre dos usuarios reales
+
+### 4. Configuracion de Supabase Auth
+
+Confirmar en el proyecto real:
+
+- `Site URL` apuntando a Vercel produccion
+- `Redirect URLs` con localhost y previews de Vercel
+
+## Archivos que conviene leer primero al retomar
 
 - `PROJECT_HANDOFF.md`
 - `lib/data/queries.ts`
 - `lib/actions.ts`
-- `app/page.tsx`
-- `app/reports/page.tsx`
+- `components/layout-shell.tsx`
+- `components/workspace-controls.tsx`
+- `app/login/page.tsx`
+- `supabase/schema.sql`
 
-Con eso ya deberia quedar claro casi todo el estado real del proyecto.
+## Siguiente paso recomendado al retomar
+
+El siguiente paso mas util y pragmatico es:
+
+1. probar produccion con 2 usuarios reales
+2. confirmar aislamiento de datos
+3. si todo sale bien, cerrar onboarding minimo o dejar instrucciones de uso para la familia
+
+No hace falta sobrearquitectar antes de esa validacion.

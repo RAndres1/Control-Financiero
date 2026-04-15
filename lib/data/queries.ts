@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { Account, Category, Movement, Workspace, WorkspaceKind, WorkspaceScope } from "@/lib/types";
+import type { Account, Category, Movement, Profile, Workspace, WorkspaceKind, WorkspaceScope } from "@/lib/types";
 import { getMonthRange, getPreviousMonthRange, getValidWorkspaceScope } from "@/lib/utils";
 
 type MetricSet = {
@@ -86,8 +86,18 @@ function groupByCategory(movements: Movement[], kind: "income" | "expense") {
   return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
 }
 
-function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
+function buildInsights(
+  currentMonth: Movement[],
+  previousMonth: Movement[],
+  profile: Profile | null,
+  accounts: Account[]
+) {
   const insights: string[] = [];
+  const financialProducts = profile?.financial_products ?? [];
+  const today = new Date();
+  const elapsedDays = today.getDate();
+  const totalDays = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const monthProgress = totalDays > 0 ? elapsedDays / totalDays : 1;
   const currentPersonal = sumByWorkspaceKind(currentMonth, "personal");
   const currentBusiness = sumByWorkspaceKind(currentMonth, "business");
   const currentGlobal = sumByWorkspaceKind(currentMonth);
@@ -95,27 +105,40 @@ function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
   const currentExpenses = currentMonth.filter((item) => item.kind === "expense");
   const personalExpenses = currentMonth.filter((item) => item.kind === "expense" && item.workspace?.kind === "personal");
 
+  if (currentMonth.length === 0) {
+    insights.push("Empieza por registrar 3 movimientos de esta semana. Con eso el tablero ya te da una primera lectura util.");
+  }
+
+  if (accounts.length === 0) {
+    const hasCreditCard = financialProducts.includes("credit_card");
+    insights.push(
+      hasCreditCard
+        ? "Tu siguiente paso es crear tus cuentas y tu tarjeta principal para registrar gastos sin mezclar todo."
+        : "Tu siguiente paso es crear tu cuenta principal para que registrar movimientos tome menos tiempo."
+    );
+  }
+
   if (currentGlobal.expense > previousGlobal.expense && previousGlobal.expense > 0) {
     const growth = Math.round(((currentGlobal.expense - previousGlobal.expense) / previousGlobal.expense) * 100);
-    insights.push(`Este mes gastaste ${growth}% mas que el mes anterior. Revisa primero las categorias variables.`);
+    insights.push(`Tus gastos van ${growth}% por encima del mes pasado. Revisa primero comida, transporte y otros gastos variables.`);
   }
 
   if (currentExpenses.length > 0) {
     const topExpenseCategory = groupByCategory(currentMonth, "expense")[0];
     if (topExpenseCategory) {
       insights.push(
-        `Tu mayor gasto del mes esta en ${topExpenseCategory.category_name} (${topExpenseCategory.workspace_kind === "personal" ? "personal" : "negocio"}), con ${topExpenseCategory.total.toLocaleString("es-CO")} en total.`
+        `Tu mayor gasto del mes esta en ${topExpenseCategory.category_name}. Si quieres ajustar una sola categoria primero, empieza por ahi.`
       );
     }
   }
 
   if (currentBusiness.expense > currentBusiness.income) {
     const gap = currentBusiness.expense - currentBusiness.income;
-    insights.push(`El negocio gasto ${gap.toLocaleString("es-CO")} mas de lo que ingreso este mes. Ajusta costos o empuja ventas.`);
+    insights.push(`Tu negocio va ${gap.toLocaleString("es-CO")} por debajo este mes. La accion simple es frenar gastos no esenciales o buscar una venta extra esta semana.`);
   }
 
   if (currentGlobal.balance < 0) {
-    insights.push("Tu flujo neto del mes es negativo. Revisa primero los gastos variables.");
+    insights.push("Este mes vas en negativo. Antes de recortar todo, identifica un gasto variable que puedas bajar desde hoy.");
   }
 
   if (personalExpenses.length > 0 && currentPersonal.expense > 0) {
@@ -124,7 +147,7 @@ function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
       personalExpenseCategories.slice(0, 2).reduce((total, item) => total + item.total, 0) / currentPersonal.expense;
 
     if (personalExpenseCategories.length <= 2 || topTwoShare >= 0.7) {
-      insights.push("Tus gastos personales estan muy concentrados en pocas categorias. Ahorrar ahi tendria mayor impacto.");
+      insights.push("Casi todo tu gasto personal esta concentrado en pocas categorias. Ajustar una de ellas te dara el mayor impacto.");
     }
   }
 
@@ -161,11 +184,28 @@ function buildInsights(currentMonth: Movement[], previousMonth: Movement[]) {
 
   if (fastestDrop) {
     const growth = Math.round(((fastestDrop.currentExpense - fastestDrop.previousExpense) / fastestDrop.previousExpense) * 100);
-    insights.push(`La cuenta ${fastestDrop.name} esta saliendo mas rapido que el mes anterior: ${growth}% mas en gastos.`);
+    insights.push(`La cuenta ${fastestDrop.name} se esta vaciando mas rapido: ${growth}% mas gasto que el mes pasado. Vale la pena revisarla primero.`);
+  }
+
+  if (profile?.monthly_expense_estimate && currentGlobal.expense > profile.monthly_expense_estimate) {
+    const extra = currentGlobal.expense - profile.monthly_expense_estimate;
+    insights.push(`Ya superaste tu gasto mensual esperado por ${extra.toLocaleString("es-CO")}. Pausa nuevos gastos pequenos hasta cerrar el mes.`);
+  }
+
+  if (
+    profile?.monthly_income_estimate &&
+    currentGlobal.expense > 0 &&
+    currentGlobal.income < profile.monthly_income_estimate * monthProgress * 0.7
+  ) {
+    insights.push("Tus ingresos registrados van por debajo de lo esperado para este punto del mes. Revisa si te falta cargar ingresos antes de ajustar gastos.");
+  }
+
+  if (financialProducts.includes("loan") && currentExpenses.length > 0) {
+    insights.push("Si tienes credito activo, separa hoy mismo la cuota mensual como categoria fija. Te va a dar una lectura mucho mas clara.");
   }
 
   if (insights.length === 0) {
-    insights.push("No hay alertas relevantes por ahora. Mantener el registro al dia ya es una ventaja.");
+    insights.push("Vas bien. El mejor siguiente paso es mantener el registro al dia para que las alertas sigan siendo utiles.");
   }
 
   return insights.slice(0, 6);
@@ -236,6 +276,25 @@ export async function getWorkspaceScopeData(requestedScope?: string): Promise<Wo
     workspaces,
     availableScopes
   };
+}
+
+export async function getCurrentProfile() {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return null;
+  }
+
+  const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? null) as Profile | null;
 }
 
 export async function getAccounts(workspaceIds: string[]) {
@@ -368,6 +427,7 @@ export async function getDashboardData(requestedScope?: string): Promise<Dashboa
   const workspaceScope = await getWorkspaceScopeData(requestedScope);
   const currentRange = getMonthRange();
   const previousRange = getPreviousMonthRange();
+  const profile = await getCurrentProfile();
 
   if (workspaceScope.workspaceIds.length === 0) {
     return {
@@ -455,7 +515,7 @@ export async function getDashboardData(requestedScope?: string): Promise<Dashboa
     },
     accounts: accountsWithBalance,
     recentMovements: movements.slice(0, 8),
-    insights: buildInsights(currentMonthMovements, previousMonthMovements),
+    insights: buildInsights(currentMonthMovements, previousMonthMovements, profile, accounts),
     reports: {
       expenseByCategory: groupByCategory(currentMonthMovements, "expense"),
       incomeByCategory: groupByCategory(currentMonthMovements, "income"),

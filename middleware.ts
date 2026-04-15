@@ -6,9 +6,12 @@ import type { Database } from "@/lib/supabase/database.types";
 const publicRoutes = ["/login"];
 
 export async function middleware(request: NextRequest) {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-pathname", request.nextUrl.pathname);
+
   let response = NextResponse.next({
     request: {
-      headers: request.headers
+      headers: requestHeaders
     }
   });
 
@@ -45,10 +48,32 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && request.nextUrl.pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
+  if (user) {
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("onboarding_completed")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const onboardingCompleted = profileData?.onboarding_completed ?? false;
+
+    if (!onboardingCompleted && request.nextUrl.pathname !== "/onboarding") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/onboarding";
+      return NextResponse.redirect(url);
+    }
+
+    if (onboardingCompleted && request.nextUrl.pathname === "/onboarding") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+
+    if (request.nextUrl.pathname === "/login") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

@@ -49,23 +49,111 @@ export function MovementCategoryField({
   }, [workspaceId, workspaces]);
 
   useEffect(() => {
-    if (!filteredAccounts.some((account) => account.id === accountId)) {
+    if (filteredAccounts.length === 0) {
       setAccountId("");
+      return;
+    }
+
+    if (!filteredAccounts.some((account) => account.id === accountId)) {
+      setAccountId(filteredAccounts[0].id);
     }
   }, [filteredAccounts, accountId]);
 
   useEffect(() => {
-    if (!filteredCategories.some((category) => category.id === categoryId)) {
+    if (filteredCategories.length === 0) {
       setCategoryId("");
+      return;
+    }
+
+    if (!filteredCategories.some((category) => category.id === categoryId)) {
+      setCategoryId(filteredCategories[0].id);
     }
   }, [filteredCategories, categoryId]);
 
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
+
   return (
-    <>
-      {workspaces.length > 1 ? (
+    <div className="space-y-5">
+      <input type="hidden" name="workspace_id" value={workspaceId} />
+      <input type="hidden" name="kind" value={kind} />
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-slate-700">Tipo</p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setKind("expense")}
+            className={[
+              "rounded-2xl px-4 py-3 text-sm font-medium transition",
+              kind === "expense"
+                ? "bg-rose-600 text-white shadow-sm"
+                : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            ].join(" ")}
+          >
+            Gasto
+          </button>
+          <button
+            type="button"
+            onClick={() => setKind("income")}
+            className={[
+              "rounded-2xl px-4 py-3 text-sm font-medium transition",
+              kind === "income"
+                ? "bg-emerald-600 text-white shadow-sm"
+                : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            ].join(" ")}
+          >
+            Ingreso
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-slate-700">Workspace</label>
-          <select name="workspace_id" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)} required>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">Categoria</label>
+          <select
+            name="category_id"
+            value={categoryId}
+            onChange={(event) => setCategoryId(event.target.value)}
+            required
+            className="h-12 rounded-2xl"
+          >
+            <option value="">{filteredCategories.length === 0 ? "Primero crea una categoria" : "Selecciona una categoria"}</option>
+            {filteredCategories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">Cuenta</label>
+          <select
+            name="account_id"
+            value={accountId}
+            onChange={(event) => setAccountId(event.target.value)}
+            required
+            className="h-12 rounded-2xl"
+          >
+            <option value="">{filteredAccounts.length === 0 ? "Primero crea una cuenta" : "Selecciona una cuenta"}</option>
+            {filteredAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {workspaces.length > 1 ? (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <label className="mb-2 block text-sm font-medium text-slate-700">Se registrara en</label>
+          <select
+            value={workspaceId}
+            onChange={(event) => setWorkspaceId(event.target.value)}
+            required
+            className="h-11 rounded-2xl border border-slate-200 bg-white"
+          >
             <option value="">Selecciona un workspace</option>
             {workspaces.map((workspace) => (
               <option key={workspace.id} value={workspace.id}>
@@ -74,41 +162,13 @@ export function MovementCategoryField({
             ))}
           </select>
         </div>
-      ) : (
-        <input type="hidden" name="workspace_id" value={workspaceId} />
-      )}
+      ) : null}
 
-      <div>
-        <label className="mb-1.5 block text-sm font-medium text-slate-700">Tipo</label>
-        <select name="kind" value={kind} onChange={(event) => setKind(event.target.value as MovementKind)}>
-          <option value="expense">Gasto</option>
-          <option value="income">Ingreso</option>
-        </select>
+      <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
+        {selectedWorkspace
+          ? `Movimiento ${kind === "expense" ? "de gasto" : "de ingreso"} en ${selectedWorkspace.name}.`
+          : "Selecciona el contexto del movimiento."}
       </div>
-
-      <div>
-        <label className="mb-1.5 block text-sm font-medium text-slate-700">Cuenta</label>
-        <select name="account_id" value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
-          <option value="">Selecciona una cuenta</option>
-          {filteredAccounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1.5 block text-sm font-medium text-slate-700">Categoria</label>
-        <select name="category_id" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
-          <option value="">Selecciona una categoria</option>
-          {filteredCategories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
-      </div>
-    </>
+    </div>
   );
 }

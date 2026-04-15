@@ -6,6 +6,11 @@ create table if not exists public.profiles (
   full_name text,
   onboarding_mode text check (onboarding_mode in ('personal_only', 'personal_and_business')),
   onboarding_completed boolean not null default false,
+  financial_products text[] not null default '{}' check (
+    financial_products <@ array['bank_account', 'credit_card', 'loan']::text[]
+  ),
+  monthly_income_estimate numeric(12,2),
+  monthly_expense_estimate numeric(12,2),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

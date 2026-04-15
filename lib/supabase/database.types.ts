@@ -101,8 +101,11 @@ export interface Database {
         Row: {
           created_at: string;
           email: string | null;
+          financial_products: ("bank_account" | "credit_card" | "loan")[];
           full_name: string | null;
           id: string;
+          monthly_expense_estimate: number | null;
+          monthly_income_estimate: number | null;
           onboarding_completed: boolean;
           onboarding_mode: "personal_only" | "personal_and_business" | null;
           updated_at: string;
@@ -110,8 +113,11 @@ export interface Database {
         Insert: {
           created_at?: string;
           email?: string | null;
+          financial_products?: ("bank_account" | "credit_card" | "loan")[];
           full_name?: string | null;
           id: string;
+          monthly_expense_estimate?: number | null;
+          monthly_income_estimate?: number | null;
           onboarding_completed?: boolean;
           onboarding_mode?: "personal_only" | "personal_and_business" | null;
           updated_at?: string;
@@ -119,8 +125,11 @@ export interface Database {
         Update: {
           created_at?: string;
           email?: string | null;
+          financial_products?: ("bank_account" | "credit_card" | "loan")[];
           full_name?: string | null;
           id?: string;
+          monthly_expense_estimate?: number | null;
+          monthly_income_estimate?: number | null;
           onboarding_completed?: boolean;
           onboarding_mode?: "personal_only" | "personal_and_business" | null;
           updated_at?: string;
